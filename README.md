@@ -20,19 +20,17 @@ We apply 4 distinct optimization problems happening at different levels:
 
 
 **Standard KD (baseline):**
-$$
-L_KD = α · KL(softmax(z_T/τ) ∥ softmax(z_S/τ)) + (1-α) · CE(z_S, y)
-$$
+
+$\mathcal{L}_{KD} = \alpha \cdot \mathrm{KL}\left(\mathrm{softmax}\left(\frac{z_T}{\tau}\right) \parallel \mathrm{softmax}\left(\frac{z_S}{\tau}\right)\right) + (1-\alpha) \cdot \mathrm{CE}(z_S, y)$
 
 **Our proposed loss:**
-$$
-L_total = CE(f_θ(x), y) + λ · W_ε(p_T, p_S; C)
-$$
 
-where W_ε is the Sinkhorn distance:
-$$
-W_ε(p_T, p_S) = min_{π ∈ Π(p_T, p_S)} ⟨C, π⟩ + ε · KL(π ∥ p_T ⊗ p_S)
-$$
+$L_{\text{total}} = \mathrm{CE}(f_\theta(x), y) + \lambda \cdot W_\varepsilon(p_T, p_S; C)$
+
+
+where $W_ε$ is the Sinkhorn distance:
+
+$W_\varepsilon(p_T, p_S) = \min_{\pi \in \Pi(p_T, p_S)} \langle C, \pi \rangle + \varepsilon \cdot \mathrm{KL}(\pi \parallel p_T \otimes p_S)$
 
 **Bilevel optimization** for the learnable cost matrix:
 - **Outer loop:** Update C to minimize validation loss (every K steps)
