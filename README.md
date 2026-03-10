@@ -1,35 +1,38 @@
 # Sinkhorn Optimal Transport Knowledge Distillation with Learnable Cost Matrix for Vision Models
 
-**MSML604 — Graduate Optimization Course Project**
-
 ## Overview
 
 We compress large vision models (teachers) into smaller ones (students) using Knowledge Distillation (KD), replacing the standard KL divergence loss with **Sinkhorn Optimal Transport (OT) distance** as the distillation loss. Our core novelty is a **learnable cost matrix C** that is jointly optimized with the student network via bilevel optimization.
 
-### Three Novel Contributions
+### Two Novel Contributions
 
-1. **First OT-KD for vision classification.** All existing OT-KD papers (SinKD, MultiLevelOT, KNOT) target NLP tasks. We are the first to apply Sinkhorn-based knowledge distillation to vision classification on CIFAR-10 and CIFAR-100.
+1. **Learnable cost matrix.** Prior OT-KD methods use a fixed, hand-designed cost matrix. We propose learning C jointly with the student network. The cost matrix C[i][j] represents "how costly" it is to confuse class i with class j, and is parameterized to ensure symmetry, non-negativity, zero diagonal, and boundedness.
 
-2. **Learnable cost matrix.** Prior OT-KD methods use a fixed, hand-designed cost matrix. We propose learning C jointly with the student network. The cost matrix C[i][j] represents "how costly" it is to confuse class i with class j, and is parameterized to ensure symmetry, non-negativity, zero diagonal, and boundedness.
-
-3. **Interpretable class geometry.** The learned cost matrix reveals semantic structure: after training on CIFAR-100, animal classes cluster together (low mutual cost), vehicle classes cluster together, and cross-category confusions incur high cost.
+2. **Interpretable class geometry.** The learned cost matrix reveals semantic structure: after training on CIFAR-100, animal classes cluster together (low mutual cost), vehicle classes cluster together, and cross-category confusions incur high cost.
 
 ## Technical Formulation
 
+We apply 4 distinct optimization problems happening at different levels:
+- LEVEL 1: Sinkhorn Iterations          ← Pure Convex Optimization
+- LEVEL 2: Student Network Training     ← Non-convex (but standard)
+- LEVEL 3: Cost Matrix Learning         ← Constrained Convex Optimization  
+- LEVEL 4: Bilevel Optimization         ← All of the above combined
+
+
 **Standard KD (baseline):**
-```
+$$
 L_KD = α · KL(softmax(z_T/τ) ∥ softmax(z_S/τ)) + (1-α) · CE(z_S, y)
-```
+$$
 
 **Our proposed loss:**
-```
+$$
 L_total = CE(f_θ(x), y) + λ · W_ε(p_T, p_S; C)
-```
+$$
 
 where W_ε is the Sinkhorn distance:
-```
+$$
 W_ε(p_T, p_S) = min_{π ∈ Π(p_T, p_S)} ⟨C, π⟩ + ε · KL(π ∥ p_T ⊗ p_S)
-```
+$$
 
 **Bilevel optimization** for the learnable cost matrix:
 - **Outer loop:** Update C to minimize validation loss (every K steps)
