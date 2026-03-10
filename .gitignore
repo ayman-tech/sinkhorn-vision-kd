@@ -13,5 +13,4 @@ wheels/
 
 # Data and checkpoints (too large for git)
 data/
-checkpoints/
 logs/
