@@ -85,54 +85,56 @@ pip install -e .
 
 ## Usage
 
+replace below commands with cifar100 if you want to run cifar100
+
 ### 1. Pretrain Teacher
 
 ```bash
-python train.py --mode pretrain_teacher --teacher resnet110 --dataset cifar100
+python train.py --mode pretrain_teacher --teacher resnet110 --dataset cifar10
 ```
 
 ### 2. Train Student Baseline (no distillation)
 
 ```bash
-python train.py --mode student_baseline --student resnet20 --dataset cifar100
+python train.py --mode student_baseline --student resnet20 --dataset cifar10
 ```
 
 ### 3. Run KL-KD Baseline
 
 ```bash
-python train.py --method kl_kd --teacher resnet110 --student resnet20 --dataset cifar100
+python train.py --method kl_kd --teacher resnet110 --student resnet20 --dataset cifar10
 ```
 
 ### 4. Run Fixed Sinkhorn OT-KD
 
 ```bash
 python train.py --method sinkhorn_kd --teacher resnet110 --student resnet20 \
-    --dataset cifar100 --epsilon 0.05 --cost_type uniform
+    --dataset cifar10 --epsilon 0.05 --cost_type uniform
 ```
 
 ### 5. Run Adaptive Sinkhorn OT-KD (Our Method)
 
 ```bash
 python train.py --method adaptive_sinkhorn_kd --teacher resnet110 --student resnet20 \
-    --dataset cifar100 --epsilon 0.05 --cost_lr 0.01 --cost_update_freq 10
+    --dataset cifar10 --epsilon 0.05 --cost_lr 0.01 --cost_update_freq 10
 ```
 
-### 6. Run All Experiments
+### 6. Evaluate and Compare
 
 ```bash
-bash experiments/run_all.sh cifar100
+python evaluate.py --dataset cifar100 --checkpoint_dir ./checkpoints/cifar10
 ```
 
-### 7. Evaluate and Compare
+### Run all above commands
 
 ```bash
-python evaluate.py --dataset cifar100 --checkpoint_dir ./checkpoints/cifar100
+bash experiments/run_all.sh cifar10
 ```
 
 ### Multi-seed Statistical Significance
 
 ```bash
-python evaluate.py --dataset cifar100 --run_seeds --num_seeds 3
+python evaluate.py --dataset cifar10 --run_seeds --num_seeds 3
 ```
 
 ## Key Hyperparameters
