@@ -235,6 +235,7 @@ def train_distillation(args):
             max_iter=args.sinkhorn_max_iter, threshold=args.sinkhorn_threshold,
             cost_lr=args.cost_lr, cost_update_freq=args.cost_update_freq,
             cost_grad_clip=args.cost_grad_clip,
+            cost_warmup_epochs=args.cost_warmup_epochs,
         ).to(device)
     else:
         raise ValueError(f"Unknown method: {args.method}")
@@ -255,6 +256,9 @@ def train_distillation(args):
     print("-" * len(header))
 
     for epoch in range(args.epochs):
+        if args.method == "adaptive_sinkhorn_kd":
+            criterion.set_epoch(epoch)
+
         student.train()
         losses = AverageMeter()
         ot_losses = AverageMeter()
@@ -489,6 +493,8 @@ def parse_args():
     parser.add_argument("--cost_update_freq", type=int, default=10,
                         help="Update C every K training steps.")
     parser.add_argument("--cost_grad_clip", type=float, default=1.0)
+    parser.add_argument("--cost_warmup_epochs", type=int, default=30,
+                        help="Epochs to wait before starting C updates.")
     parser.add_argument("--val_fraction", type=float, default=0.1,
                         help="Fraction of train data for cost matrix validation.")
 
