@@ -12,6 +12,7 @@ Usage:
 import argparse
 import os
 import glob
+import re
 
 import numpy as np
 import torch
@@ -37,7 +38,10 @@ MODEL_FACTORY = {
 
 
 def get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Select best available device: CUDA > CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
 def load_model(arch: str, num_classes: int, ckpt_path: str, device: torch.device):
@@ -55,33 +59,36 @@ def load_model(arch: str, num_classes: int, ckpt_path: str, device: torch.device
     return model, None
 
 
-def evaluate_checkpoint(model: nn.Module, test_loader, device) -> float:
-    """Evaluate model on test set."""
+def evaluate_checkpoint(model: nn.Module, test_loader, device):
+    """Evaluate model on test set, return (top1_acc, top5_acc)."""
     model.eval()
     top1 = AverageMeter()
+    top5 = AverageMeter()
     with torch.no_grad():
         for images, labels in test_loader:
             images, labels = images.to(device), labels.to(device)
             logits = model(images)
-            acc = accuracy(logits, labels, topk=(1,))[0]
-            top1.update(acc, images.size(0))
-    return top1.avg
+            acc1, acc5 = accuracy(logits, labels, topk=(1, 5))
+            top1.update(acc1, images.size(0))
+            top5.update(acc5, images.size(0))
+    return top1.avg, top5.avg
 
 
 def print_comparison_table(results: list):
     """Print a formatted comparison table of all methods."""
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 90)
     print("RESULTS COMPARISON")
-    print("=" * 80)
-    header = f"{'Method':<25} | {'Top-1 Acc':>10} | {'Params':>10} | {'FLOPs':>12}"
+    print("=" * 90)
+    header = f"{'Method':<25} | {'Top-1 Acc':>10} | {'Top-5 Acc':>10} | {'Params':>10} | {'FLOPs':>12}"
     print(header)
     print("-" * len(header))
     for r in results:
-        acc_str = f"{r['top1_acc']:.2f}%" if r['top1_acc'] else "N/A"
+        acc1_str = f"{r['top1_acc']:.2f}%" if r['top1_acc'] is not None else "N/A"
+        acc5_str = f"{r['top5_acc']:.2f}%" if r.get('top5_acc') is not None else "N/A"
         params_str = f"{r['params']/1e6:.2f}M"
         flops_str = f"{r['flops']/1e6:.1f}M" if r['flops'] else "N/A"
-        print(f"{r['method']:<25} | {acc_str:>10} | {params_str:>10} | {flops_str:>12}")
-    print("=" * 80)
+        print(f"{r['method']:<25} | {acc1_str:>10} | {acc5_str:>10} | {params_str:>10} | {flops_str:>12}")
+    print("=" * 90)
 
 
 def collect_results(args):
@@ -97,15 +104,22 @@ def collect_results(args):
 
     results = []
 
+    def _get_accs(ckpt, model):
+        """Extract top-1 and top-5 from checkpoint, or evaluate if missing."""
+        acc1 = ckpt.get("best_acc") if ckpt else None
+        acc5 = ckpt.get("best_acc5") if ckpt else None
+        # If top-5 not saved in checkpoint, evaluate the model
+        if acc1 is not None and acc5 is None and ckpt:
+            acc1, acc5 = evaluate_checkpoint(model, test_loader, device)
+        return acc1, acc5
+
     # ── Teacher ───────────────────────────────────────────────────────────
     teacher_path = os.path.join(ckpt_dir, f"{args.dataset}_{args.teacher}_teacher.pth")
     teacher, teacher_ckpt = load_model(args.teacher, num_classes, teacher_path, device)
-    teacher_acc = teacher_ckpt["best_acc"] if teacher_ckpt else None
-    if teacher_acc is None and teacher_ckpt:
-        teacher_acc = evaluate_checkpoint(teacher, test_loader, device)
+    t_acc1, t_acc5 = _get_accs(teacher_ckpt, teacher)
     results.append({
         "method": f"Teacher ({args.teacher})",
-        "top1_acc": teacher_acc,
+        "top1_acc": t_acc1, "top5_acc": t_acc5,
         "params": count_parameters(teacher),
         "flops": estimate_flops(teacher),
         "params_M": count_parameters(teacher) / 1e6,
@@ -114,10 +128,10 @@ def collect_results(args):
     # ── Student baseline (no KD) ─────────────────────────────────────────
     baseline_path = os.path.join(ckpt_dir, f"{args.student}_no_kd_best.pth")
     student_base, base_ckpt = load_model(args.student, num_classes, baseline_path, device)
-    base_acc = base_ckpt["best_acc"] if base_ckpt else None
+    b_acc1, b_acc5 = _get_accs(base_ckpt, student_base)
     results.append({
-        "method": f"Student (no KD)",
-        "top1_acc": base_acc,
+        "method": "Student (no KD)",
+        "top1_acc": b_acc1, "top5_acc": b_acc5,
         "params": count_parameters(student_base),
         "flops": estimate_flops(student_base),
         "params_M": count_parameters(student_base) / 1e6,
@@ -126,10 +140,10 @@ def collect_results(args):
     # ── KL-KD ─────────────────────────────────────────────────────────────
     kl_path = os.path.join(ckpt_dir, "kl_kd_best.pth")
     student_kl, kl_ckpt = load_model(args.student, num_classes, kl_path, device)
-    kl_acc = kl_ckpt["best_acc"] if kl_ckpt else None
+    kl_acc1, kl_acc5 = _get_accs(kl_ckpt, student_kl)
     results.append({
         "method": "KL-KD",
-        "top1_acc": kl_acc,
+        "top1_acc": kl_acc1, "top5_acc": kl_acc5,
         "params": count_parameters(student_kl),
         "flops": estimate_flops(student_kl),
         "params_M": count_parameters(student_kl) / 1e6,
@@ -138,10 +152,10 @@ def collect_results(args):
     # ── Fixed Sinkhorn KD ────────────────────────────────────────────────
     sink_path = os.path.join(ckpt_dir, "sinkhorn_kd_best.pth")
     student_sink, sink_ckpt = load_model(args.student, num_classes, sink_path, device)
-    sink_acc = sink_ckpt["best_acc"] if sink_ckpt else None
+    s_acc1, s_acc5 = _get_accs(sink_ckpt, student_sink)
     results.append({
         "method": "Fixed-OT-KD",
-        "top1_acc": sink_acc,
+        "top1_acc": s_acc1, "top5_acc": s_acc5,
         "params": count_parameters(student_sink),
         "flops": estimate_flops(student_sink),
         "params_M": count_parameters(student_sink) / 1e6,
@@ -150,10 +164,10 @@ def collect_results(args):
     # ── Adaptive Sinkhorn KD ─────────────────────────────────────────────
     adaptive_path = os.path.join(ckpt_dir, "adaptive_sinkhorn_kd_best.pth")
     student_adapt, adapt_ckpt = load_model(args.student, num_classes, adaptive_path, device)
-    adapt_acc = adapt_ckpt["best_acc"] if adapt_ckpt else None
+    a_acc1, a_acc5 = _get_accs(adapt_ckpt, student_adapt)
     results.append({
         "method": "Adaptive-OT-KD (Ours)",
-        "top1_acc": adapt_acc,
+        "top1_acc": a_acc1, "top5_acc": a_acc5,
         "params": count_parameters(student_adapt),
         "flops": estimate_flops(student_adapt),
         "params_M": count_parameters(student_adapt) / 1e6,
@@ -206,8 +220,14 @@ def generate_visualizations(args, results, adapt_ckpt):
             plot_data, save_path=os.path.join(fig_dir, "compression_tradeoff.png"),
         )
 
-    # ── 4. Cost matrix evolution ──────────────────────────────────────────
-    epoch_ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "adaptive_sinkhorn_kd_epoch*.pth")))
+    # ── 4. Cost matrix evolution (sorted by epoch number) ─────────────────
+    epoch_ckpts = glob.glob(os.path.join(ckpt_dir, "adaptive_sinkhorn_kd_epoch*.pth"))
+    # Sort by epoch number (numeric), not by filename string
+    def _extract_epoch(path):
+        m = re.search(r"epoch(\d+)\.pth$", path)
+        return int(m.group(1)) if m else 0
+    epoch_ckpts.sort(key=_extract_epoch)
+
     if epoch_ckpts:
         cost_matrices = []
         epochs = []
