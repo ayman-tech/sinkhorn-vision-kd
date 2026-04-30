@@ -53,24 +53,30 @@ class LearnableCostMatrix(nn.Module):
         - Zero diagonal: C[i][i] = 0  (no cost for correct classification)
         - Bounded: C in [0, 1]
 
-    The raw parameter A is unconstrained; the forward pass applies the
+    The raw parameter raw_C is unconstrained; the forward pass applies the
     necessary transformations to produce a valid C.
 
     Args:
         num_classes: Number of classes (determines C shape: K x K).
         init_scale: Initial scale for the raw parameter. Smaller values
             start C closer to uniform; larger values start with more variance.
+        learn_cost: If False, use a fixed (1 - I) cost matrix with no gradients.
     """
 
-    def __init__(self, num_classes: int, init_scale: float = 0.5):
+    def __init__(self, num_classes: int, init_scale: float = 0.5, learn_cost: bool = True):
         super().__init__()
         self.num_classes = num_classes
+        self.learn_cost = learn_cost
 
-        # Raw unconstrained parameter
-        # Initialize such that after softplus + normalization, C starts ~uniform
-        # softplus(init_scale) ≈ init_scale for init_scale > 1, ≈ ln(1+e^x) for small x
-        A = torch.randn(num_classes, num_classes) * 0.1 + init_scale
-        self.A = nn.Parameter(A)
+        if learn_cost:
+            # Raw unconstrained parameter
+            # Initialize such that after softplus + normalization, C starts ~uniform
+            A = torch.randn(num_classes, num_classes) * 0.1 + init_scale
+            self.raw_C = nn.Parameter(A)
+        else:
+            # Fixed uniform off-diagonal cost matrix — no gradient
+            fixed = 1.0 - torch.eye(num_classes)
+            self.register_buffer("raw_C", fixed)
 
     def forward(self) -> torch.Tensor:
         """Produce a valid cost matrix from the raw parameter.
@@ -79,8 +85,11 @@ class LearnableCostMatrix(nn.Module):
             C: Cost matrix of shape (K, K), symmetric, non-negative,
                zero diagonal, values in [0, 1].
         """
+        if not self.learn_cost:
+            return self.raw_C
+
         # Step 1: Symmetrize
-        S = (self.A + self.A.T) / 2
+        S = (self.raw_C + self.raw_C.T) / 2
 
         # Step 2: Non-negativity via softplus (smooth approximation to ReLU)
         C = F.softplus(S)
@@ -146,6 +155,8 @@ class AdaptiveSinkhornKD(nn.Module):
         cost_update_freq: int = 10,
         cost_grad_clip: float = 1.0,
         init_scale: float = 0.5,
+        learn_cost: bool = True,
+        constrain_cost: bool = True,
     ):
         super().__init__()
         self.temperature = temperature
@@ -155,16 +166,44 @@ class AdaptiveSinkhornKD(nn.Module):
         self.threshold = threshold
         self.cost_update_freq = cost_update_freq
         self.cost_grad_clip = cost_grad_clip
+        self.learn_cost = learn_cost
+        self.constrain_cost = constrain_cost
 
         self.ce_loss = nn.CrossEntropyLoss()
-        self.cost_matrix = LearnableCostMatrix(num_classes, init_scale)
+        self.cost_matrix = LearnableCostMatrix(num_classes, init_scale, learn_cost=learn_cost)
 
         # Separate optimizer for the cost matrix (outer loop of bilevel opt)
-        self.cost_optimizer = torch.optim.Adam(
-            self.cost_matrix.parameters(), lr=cost_lr
+        # Only create if there are learnable parameters
+        learnable_params = list(self.cost_matrix.parameters())
+        self.cost_optimizer = (
+            torch.optim.Adam(learnable_params, lr=cost_lr) if learnable_params else None
         )
 
         self._step_count = 0
+
+    @property
+    def raw_C(self):
+        """Expose the raw cost parameter/buffer from the cost matrix module."""
+        return self.cost_matrix.raw_C
+
+    def project_cost_matrix(self):
+        """Apply validity constraints in-place to raw_C after a gradient step.
+
+        Enforces:
+            1. Symmetry:       C = (C + C.T) / 2
+            2. Non-negativity: C = softplus(C)
+            3. Zero diagonal:  C = C - diag(diag(C))
+            4. Normalization:  C = C / (C.max() + 1e-8)
+        """
+        if not self.learn_cost:
+            return
+        with torch.no_grad():
+            C = self.cost_matrix.raw_C
+            C = (C + C.T) / 2
+            C = F.softplus(C)
+            C = C - torch.diag(torch.diag(C))
+            C = C / (C.max() + 1e-8)
+            self.cost_matrix.raw_C.copy_(C)
 
     def forward(
         self, student_logits: torch.Tensor, teacher_logits: torch.Tensor,
@@ -247,6 +286,10 @@ class AdaptiveSinkhornKD(nn.Module):
         Returns:
             Dict with cost update metrics: "cost_loss", "cost_grad_norm".
         """
+        # Skip all computation when cost matrix is fixed (learn_cost=False)
+        if not self.learn_cost or self.cost_optimizer is None:
+            return {"cost_loss": 0.0, "cost_grad_norm": 0.0}
+
         # Teacher always in eval mode
         teacher.eval()
 
@@ -270,6 +313,10 @@ class AdaptiveSinkhornKD(nn.Module):
         )
 
         self.cost_optimizer.step()
+
+        # Optionally project raw_C back into valid space
+        if self.constrain_cost:
+            self.project_cost_matrix()
 
         return {
             "cost_loss": loss.item(),

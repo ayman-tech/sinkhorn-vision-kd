@@ -10,8 +10,9 @@ Usage:
 """
 
 import argparse
-import os
 import glob
+import json
+import os
 
 import numpy as np
 import torch
@@ -236,48 +237,58 @@ def generate_visualizations(args, results, adapt_ckpt):
 
 
 def run_multi_seed(args):
-    """Run all methods across multiple seeds and report mean +/- std."""
-    from train import train_distillation, train_student_baseline, set_seed
+    """Aggregate per-seed JSON logs and report mean ± std across seeds.
 
-    seeds = list(range(args.seed, args.seed + args.num_seeds))
-    all_results = {method: [] for method in ["student_baseline", "kl_kd", "sinkhorn_kd", "adaptive_sinkhorn_kd"]}
+    Reads logs/{method}_seed*.json files written by train.py and prints:
+      - Top-1 accuracy (best val_acc in each run)
+      - Convergence epoch (first epoch >= threshold)
+      - Loss smoothness (mean |Δ train_loss|)
+    """
+    methods = ["kl_kd", "sinkhorn_kd", "adaptive_sinkhorn_kd"]
 
-    for seed in seeds:
-        print(f"\n{'='*60}")
-        print(f"SEED {seed}")
-        print(f"{'='*60}")
-        args.seed = seed
+    print("\n" + "=" * 78)
+    print("MULTI-SEED RESULTS (from logs/)")
+    print("=" * 78)
+    header = (
+        f"{'Method':<25} | {'Top-1 Acc':>17} | {'Conv. Epoch':>13} | {'Loss Smooth':>13}"
+    )
+    print(header)
+    print("-" * len(header))
 
-        # Student baseline
-        args.mode = "student_baseline"
-        base_acc = train_student_baseline(args)
-        all_results["student_baseline"].append(base_acc)
+    for method in methods:
+        pattern = os.path.join("logs", f"{method}_seed*.json")
+        files = sorted(glob.glob(pattern))
 
-        # KL-KD
-        args.method = "kl_kd"
-        _, kl_acc = train_distillation(args)
-        all_results["kl_kd"].append(kl_acc)
+        if not files:
+            print(f"{method:<25} | {'no logs found':>17}")
+            continue
 
-        # Fixed Sinkhorn
-        args.method = "sinkhorn_kd"
-        _, sink_acc = train_distillation(args)
-        all_results["sinkhorn_kd"].append(sink_acc)
+        accs, conv_epochs, smoothnesses = [], [], []
+        for fpath in files:
+            with open(fpath) as f:
+                data = json.load(f)
+            if data.get("val_acc"):
+                accs.append(max(data["val_acc"]))
+            if data.get("convergence_epoch") is not None:
+                conv_epochs.append(data["convergence_epoch"])
+            if data.get("loss_smoothness") is not None:
+                smoothnesses.append(data["loss_smoothness"])
 
-        # Adaptive Sinkhorn
-        args.method = "adaptive_sinkhorn_kd"
-        _, adapt_acc = train_distillation(args)
-        all_results["adaptive_sinkhorn_kd"].append(adapt_acc)
+        acc_str = (
+            f"{np.mean(accs):.2f}±{np.std(accs):.2f}%" if accs else "N/A"
+        )
+        conv_str = (
+            f"{np.mean(conv_epochs):.1f}±{np.std(conv_epochs):.1f}"
+            if conv_epochs else "N/A"
+        )
+        smooth_str = (
+            f"{np.mean(smoothnesses):.4f}±{np.std(smoothnesses):.4f}"
+            if smoothnesses else "N/A"
+        )
+        print(f"{method:<25} | {acc_str:>17} | {conv_str:>13} | {smooth_str:>13}")
 
-    # Report
-    print("\n" + "=" * 60)
-    print(f"MULTI-SEED RESULTS ({args.num_seeds} seeds)")
-    print("=" * 60)
-    print(f"{'Method':<25} | {'Mean Acc':>10} | {'Std':>8}")
-    print("-" * 50)
-    for method, accs in all_results.items():
-        mean = np.mean(accs)
-        std = np.std(accs)
-        print(f"{method:<25} | {mean:>9.2f}% | {std:>7.2f}%")
+    print("=" * 78)
+    print(f"({len(files)} seed file(s) found per method pattern)")
 
 
 def parse_args():

@@ -8,10 +8,13 @@ Generates publication-quality figures for:
   4. Compression trade-off (Pareto frontier: model size vs accuracy)
 """
 
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 import seaborn as sns
+import torch
 from typing import Dict, List, Optional
 
 # Use non-interactive backend for server environments
@@ -27,6 +30,61 @@ plt.rcParams.update({
     "legend.fontsize": 11,
     "figure.dpi": 150,
 })
+
+
+CIFAR10_CLASS_NAMES = [
+    "airplane", "automobile", "bird", "cat", "deer",
+    "dog", "frog", "horse", "ship", "truck",
+]
+
+
+def plot_cost_heatmap(C_path: str, dataset: str, save_path: str):
+    """Load a saved cost matrix .pt file and plot a labelled heatmap.
+
+    Args:
+        C_path: Path to a .pt file containing a cost matrix tensor.
+        dataset: Dataset name — "cifar10" uses named class labels,
+                 anything else falls back to generic "class_N" labels.
+        save_path: Where to save the resulting figure (PNG).
+    """
+    C = torch.load(C_path, map_location="cpu", weights_only=False)
+    if isinstance(C, torch.Tensor):
+        C = C.detach().float().numpy()
+
+    num_classes = C.shape[0]
+    if dataset == "cifar10":
+        class_names = CIFAR10_CLASS_NAMES
+    else:
+        class_names = [f"class_{i}" for i in range(num_classes)]
+
+    figsize = (8, 7) if num_classes <= 20 else (18, 16)
+    show_labels = num_classes <= 30
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.heatmap(
+        C,
+        ax=ax,
+        cmap="YlOrRd",
+        square=True,
+        xticklabels=class_names if show_labels else False,
+        yticklabels=class_names if show_labels else False,
+        cbar_kws={"label": "Transport cost", "shrink": 0.8},
+        linewidths=0.1 if num_classes <= 20 else 0,
+    )
+    ax.set_title(f"Learned Cost Matrix ({dataset.upper()})", fontsize=16, fontweight="bold")
+    ax.set_xlabel("Target class j")
+    ax.set_ylabel("Source class i")
+    if show_labels:
+        plt.xticks(rotation=45, ha="right")
+        plt.yticks(rotation=0)
+
+    plt.tight_layout()
+    save_dir = os.path.dirname(save_path)
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Cost heatmap saved to {save_path}")
 
 
 def plot_cost_matrix(

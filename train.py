@@ -21,6 +21,7 @@ Usage examples:
 """
 
 import argparse
+import json
 import os
 import time
 import random
@@ -36,7 +37,7 @@ from models import resnet20, resnet56, resnet110, mobilenetv2
 from distillation import KLDistillationLoss, SinkhornDistillationLoss, AdaptiveSinkhornKD
 from utils.data_loader import get_cifar_loaders, get_class_names
 from utils.metrics import accuracy, count_parameters, estimate_flops, AverageMeter
-from utils.visualization import plot_cost_matrix, plot_training_curves
+from utils.visualization import plot_cost_matrix, plot_cost_heatmap, plot_training_curves
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -79,12 +80,20 @@ def build_optimizer(model: nn.Module, lr: float, momentum: float, weight_decay: 
 
 
 def build_scheduler(optimizer, epochs: int, warmup_epochs: int = 5):
-    """Cosine annealing with linear warmup."""
-    def lr_lambda(epoch):
-        if epoch < warmup_epochs:
-            return (epoch + 1) / warmup_epochs
-        progress = (epoch - warmup_epochs) / max(1, epochs - warmup_epochs)
-        return 0.5 * (1.0 + np.cos(np.pi * progress))
+    """Cosine annealing with linear warmup. Flat LR for short runs."""
+    if epochs <= 10:
+        # For short runs: 2-epoch linear warmup then flat LR.
+        # Avoids spending all epochs in warmup or decay.
+        def lr_lambda(epoch):
+            if epoch < 2:
+                return (epoch + 1) / 2
+            return 1.0
+    else:
+        def lr_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            progress = (epoch - warmup_epochs) / max(1, epochs - warmup_epochs)
+            return 0.5 * (1.0 + np.cos(np.pi * progress))
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
@@ -169,6 +178,20 @@ def evaluate_model(model: nn.Module, loader, device: torch.device) -> float:
     return top1.avg
 
 
+def evaluate_model_loss(model: nn.Module, loader, device: torch.device) -> float:
+    """Evaluate CE loss on a data loader."""
+    model.eval()
+    ce = nn.CrossEntropyLoss()
+    losses = AverageMeter()
+    with torch.no_grad():
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            logits = model(images)
+            loss = ce(logits, labels)
+            losses.update(loss.item(), images.size(0))
+    return losses.avg
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Distillation Training
 # ──────────────────────────────────────────────────────────────────────────────
@@ -235,9 +258,23 @@ def train_distillation(args):
             max_iter=args.sinkhorn_max_iter, threshold=args.sinkhorn_threshold,
             cost_lr=args.cost_lr, cost_update_freq=args.cost_update_freq,
             cost_grad_clip=args.cost_grad_clip,
+            learn_cost=args.learn_cost, constrain_cost=args.constrain_cost,
         ).to(device)
     else:
         raise ValueError(f"Unknown method: {args.method}")
+
+    # ── Short-run overrides (≤10 epochs only) ────────────────────────────
+    if args.epochs <= 10:
+        effective_epsilon = max(args.epsilon, 0.5)
+        effective_lambda  = min(args.lambda_ot, 0.1)
+        if args.method == "sinkhorn_kd":
+            criterion.epsilon   = effective_epsilon
+            criterion.lambda_ot = effective_lambda
+        elif args.method == "adaptive_sinkhorn_kd":
+            criterion.epsilon   = effective_epsilon
+            criterion.lambda_ot = effective_lambda
+        elif args.method == "kl_kd":
+            criterion.temperature = 1.0
 
     # ── Optimizer & scheduler ─────────────────────────────────────────────
     optimizer = build_optimizer(student, args.lr, args.momentum, args.weight_decay)
@@ -247,6 +284,7 @@ def train_distillation(args):
     history = {
         "train_acc": [], "val_acc": [], "train_loss": [],
         "ot_loss": [], "kd_loss": [], "ce_loss": [],
+        "val_loss": [], "epoch_time": [],
     }
     best_acc = 0.0
 
@@ -255,6 +293,7 @@ def train_distillation(args):
     print("-" * len(header))
 
     for epoch in range(args.epochs):
+        epoch_start = time.time()
         student.train()
         losses = AverageMeter()
         ot_losses = AverageMeter()
@@ -312,6 +351,8 @@ def train_distillation(args):
 
         # ── Evaluation ────────────────────────────────────────────────────
         test_acc = evaluate_model(student, test_loader, device)
+        val_loss = evaluate_model_loss(student, test_loader, device)
+        epoch_time = time.time() - epoch_start
         lr_now = optimizer.param_groups[0]["lr"]
 
         print(f"{epoch+1:>6} | {losses.avg:>8.4f} | {ot_losses.avg:>8.4f} | "
@@ -322,6 +363,8 @@ def train_distillation(args):
         history["train_loss"].append(losses.avg)
         history["ot_loss"].append(ot_losses.avg)
         history["ce_loss"].append(ce_losses.avg)
+        history["val_loss"].append(val_loss)
+        history["epoch_time"].append(epoch_time)
 
         # ── Checkpointing ─────────────────────────────────────────────────
         if test_acc > best_acc:
@@ -363,6 +406,40 @@ def train_distillation(args):
             save_path=os.path.join(ckpt_dir, "learned_cost_matrix.png"),
             title=f"Learned Cost Matrix ({args.dataset.upper()})",
         )
+
+    # ── Save training dynamics JSON log ───────────────────────────────────
+    os.makedirs("logs", exist_ok=True)
+    if args.epochs <= 10:
+        thresh = 55.0 if args.dataset == "cifar10" else 35.0
+    else:
+        thresh = 90.0 if args.dataset == "cifar10" else 65.0
+    val_acc_list = history["val_acc"]
+    convergence_epoch = next(
+        (i + 1 for i, acc in enumerate(val_acc_list) if acc >= thresh), None
+    )
+    train_loss_arr = np.array(history["train_loss"])
+    loss_smoothness = (
+        float(np.mean(np.abs(np.diff(train_loss_arr)))) if len(train_loss_arr) > 1 else 0.0
+    )
+    log_data = {
+        "train_loss": [float(x) for x in history["train_loss"]],
+        "val_loss": [float(x) for x in history["val_loss"]],
+        "val_acc": [float(x) for x in history["val_acc"]],
+        "epoch_time": [float(x) for x in history["epoch_time"]],
+        "convergence_epoch": convergence_epoch,
+        "loss_smoothness": loss_smoothness,
+    }
+    log_path = os.path.join("logs", f"{args.method}_seed{args.seed}.json")
+    with open(log_path, "w") as f:
+        json.dump(log_data, f, indent=2)
+    print(f"Training log saved to {log_path}")
+
+    # ── Save raw cost matrix + heatmap (adaptive only) ────────────────────
+    if args.method == "adaptive_sinkhorn_kd":
+        cost_pt_path = os.path.join("logs", f"cost_C_{args.dataset}_seed{args.seed}.pt")
+        torch.save(criterion.raw_C.data, cost_pt_path)
+        heatmap_path = os.path.join(ckpt_dir, f"cost_heatmap_seed{args.seed}.png")
+        plot_cost_heatmap(cost_pt_path, args.dataset, save_path=heatmap_path)
 
     return history, best_acc
 
@@ -491,6 +568,12 @@ def parse_args():
     parser.add_argument("--cost_grad_clip", type=float, default=1.0)
     parser.add_argument("--val_fraction", type=float, default=0.1,
                         help="Fraction of train data for cost matrix validation.")
+    parser.add_argument("--learn_cost", action=argparse.BooleanOptionalAction, default=True,
+                        help="Learn cost matrix jointly with student (default: True). "
+                             "Use --no-learn_cost to fix C to (1 - I).")
+    parser.add_argument("--constrain_cost", action=argparse.BooleanOptionalAction, default=True,
+                        help="Project cost matrix after each update (default: True). "
+                             "Use --no-constrain_cost for unconstrained C baseline.")
 
     # Checkpointing
     parser.add_argument("--checkpoint_dir", type=str, default=None)
