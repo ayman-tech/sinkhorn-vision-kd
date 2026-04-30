@@ -1,5 +1,5 @@
 """
-Evaluation metrics: accuracy, parameter count, and FLOPs estimation.
+Evaluation metrics: accuracy, calibration, parameter count, and FLOPs estimation.
 """
 
 import torch
@@ -88,6 +88,69 @@ def estimate_flops(model: nn.Module, input_size: Tuple[int, ...] = (1, 3, 32, 32
 
     return total_flops[0]
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Calibration
+# ──────────────────────────────────────────────────────────────────────────────
+
+def collect_predictions(
+    model: nn.Module, loader, device: torch.device
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Run inference on a data loader and return softmax probabilities + labels.
+
+    Returns:
+        probs:  Shape (N, C) — softmax probabilities.
+        labels: Shape (N,)   — ground-truth class indices.
+    """
+    model.eval()
+    all_probs, all_labels = [], []
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+            probs = torch.softmax(model(images), dim=1)
+            all_probs.append(probs.cpu())
+            all_labels.append(labels)
+    return torch.cat(all_probs), torch.cat(all_labels)
+
+
+def compute_ece(probs: torch.Tensor, labels: torch.Tensor, n_bins: int = 15) -> float:
+    """Expected Calibration Error.
+
+    Partitions predictions into n_bins by confidence and computes the
+    weighted average |mean_confidence - accuracy| across bins.
+    """
+    confidences, predictions = probs.max(dim=1)
+    correct = predictions.eq(labels).float()
+    bin_edges = torch.linspace(0.0, 1.0, n_bins + 1)
+    ece = 0.0
+    n = len(labels)
+    for i in range(n_bins):
+        lo, hi = bin_edges[i].item(), bin_edges[i + 1].item()
+        mask = (confidences >= lo) & (confidences <= hi) if i == n_bins - 1 \
+               else (confidences >= lo) & (confidences < hi)
+        n_in = mask.sum().item()
+        if n_in == 0:
+            continue
+        ece += (n_in / n) * abs(confidences[mask].mean().item() - correct[mask].mean().item())
+    return ece
+
+
+def compute_nll(probs: torch.Tensor, labels: torch.Tensor) -> float:
+    """Average negative log-likelihood at T=1 on the test set."""
+    log_probs = torch.log(probs.clamp(min=1e-12))
+    return -log_probs[torch.arange(len(labels)), labels].mean().item()
+
+
+def compute_brier_score(
+    probs: torch.Tensor, labels: torch.Tensor, num_classes: int
+) -> float:
+    """Multiclass Brier score: MSE between probability vector and one-hot label."""
+    one_hot = torch.zeros(len(labels), num_classes)
+    one_hot.scatter_(1, labels.unsqueeze(1), 1.0)
+    return ((probs - one_hot) ** 2).sum(dim=1).mean().item()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 class AverageMeter:
     """Tracks running mean and current value of a metric."""
