@@ -108,21 +108,19 @@ python train.py --method kl_kd --teacher resnet110 --student resnet20 --dataset 
 ### 4. Run Fixed Sinkhorn OT-KD
 
 ```bash
-python train.py --method sinkhorn_kd --teacher resnet110 --student resnet20 \
-    --dataset cifar10 --epsilon 0.05 --cost_type uniform
+python train.py --method sinkhorn_kd --teacher resnet110 --student resnet20 --dataset cifar10 --epsilon 0.05 --cost_type uniform
 ```
 
 ### 5. Run Adaptive Sinkhorn OT-KD (Our Method)
 
 ```bash
-python train.py --method adaptive_sinkhorn_kd --teacher resnet110 --student resnet20 \
-    --dataset cifar10 --epsilon 0.05 --cost_lr 0.01 --cost_update_freq 10
+python train.py --method adaptive_sinkhorn_kd --teacher resnet110 --student resnet20 --dataset cifar10 --epsilon 0.05 --cost_lr 0.01 --cost_update_freq 10
 ```
 
 ### 6. Evaluate and Compare
 
 ```bash
-python evaluate.py --dataset cifar100 --checkpoint_dir ./checkpoints/cifar10
+python evaluate.py --dataset cifar10 --checkpoint_dir ./checkpoints/cifar10
 ```
 
 ### Run all above commands
