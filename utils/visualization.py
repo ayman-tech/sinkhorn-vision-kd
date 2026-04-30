@@ -456,7 +456,7 @@ def plot_class_clustering(
         n_components=2,
         perplexity=min(30, num_classes - 1),
         random_state=42,
-        n_iter=2000,
+        max_iter=2000,
         init="pca",
     ).fit_transform(C)
 
