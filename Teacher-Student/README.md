@@ -1,0 +1,166 @@
+# Sinkhorn Optimal Transport Knowledge Distillation with Learnable Cost Matrix for Vision Models
+
+## Overview
+
+We compress large vision models (teachers) into smaller ones (students) using Knowledge Distillation (KD), replacing the standard KL divergence loss with **Sinkhorn Optimal Transport (OT) distance** as the distillation loss. Our core novelty is a **learnable cost matrix C** that is jointly optimized with the student network via bilevel optimization.
+
+### Two Novel Contributions
+
+1. **Learnable cost matrix.** Prior OT-KD methods use a fixed, hand-designed cost matrix. We propose learning C jointly with the student network. The cost matrix C[i][j] represents "how costly" it is to confuse class i with class j, and is parameterized to ensure symmetry, non-negativity, zero diagonal, and boundedness.
+
+2. **Interpretable class geometry.** The learned cost matrix reveals semantic structure: after training on CIFAR-100, animal classes cluster together (low mutual cost), vehicle classes cluster together, and cross-category confusions incur high cost.
+
+## Technical Formulation
+
+We apply 4 distinct optimization problems happening at different levels:
+- LEVEL 1: Sinkhorn Iterations          ← Pure Convex Optimization
+- LEVEL 2: Student Network Training     ← Non-convex (but standard)
+- LEVEL 3: Cost Matrix Learning         ← Constrained Convex Optimization  
+- LEVEL 4: Bilevel Optimization         ← All of the above combined
+
+
+**Standard KD (baseline):**
+
+$\mathcal{L}_{KD} = \alpha \cdot \mathrm{KL}\left(\mathrm{softmax}\left(\frac{z_T}{\tau}\right) \parallel \mathrm{softmax}\left(\frac{z_S}{\tau}\right)\right) + (1-\alpha) \cdot \mathrm{CE}(z_S, y)$
+
+**Our proposed loss:**
+
+$L_{\text{total}} = \mathrm{CE}(f_\theta(x), y) + \lambda \cdot W_\varepsilon(p_T, p_S; C)$
+
+
+where $W_ε$ is the Sinkhorn distance:
+
+$W_\varepsilon(p_T, p_S) = \min_{\pi \in \Pi(p_T, p_S)} \langle C, \pi \rangle + \varepsilon \cdot \mathrm{KL}(\pi \parallel p_T \otimes p_S)$
+
+**Bilevel optimization** for the learnable cost matrix:
+- **Outer loop:** Update C to minimize validation loss (every K steps)
+- **Inner loop:** Update student θ to minimize training loss with fixed C
+
+**Cost matrix parameterization** (ensuring validity):
+1. Raw parameter A (unconstrained)
+2. Symmetrize: S = (A + Aᵀ) / 2
+3. Non-negativity: C' = softplus(S)
+4. Zero diagonal: C = C' − diag(diag(C'))
+5. Normalize: C = C / max(C)
+
+## Project Structure
+
+```
+sinkhorn-vision-kd/
+├── configs/
+│   ├── cifar10_config.yaml
+│   └── cifar100_config.yaml
+├── models/
+│   ├── resnet.py           # ResNet-20/56/110 for CIFAR
+│   └── mobilenet.py        # MobileNetV2 (lightweight student)
+├── distillation/
+│   ├── kl_distill.py       # Baseline KL-KD
+│   ├── sinkhorn_distill.py # Fixed cost matrix OT-KD
+│   └── adaptive_sinkhorn.py # Learnable cost matrix OT-KD [OURS]
+├── utils/
+│   ├── data_loader.py      # CIFAR-10/100 with standard augmentation
+│   ├── metrics.py          # Accuracy, FLOPs, parameter count
+│   └── visualization.py    # Cost matrix heatmaps, training curves
+├── train.py                # Main training script
+├── evaluate.py             # Evaluation and comparison
+└── experiments/
+    └── run_all.sh          # Run full experimental pipeline
+```
+
+## Setup
+
+```bash
+# Clone and install with uv
+git clone <repo-url>
+cd sinkhorn-vision-kd
+uv sync
+```
+
+Or with pip:
+```bash
+pip install -e .
+```
+
+**Requirements:** Python 3.12+, PyTorch 2.0+, torchvision, POT, numpy, matplotlib, seaborn, tqdm, wandb (optional).
+
+## Usage
+
+replace below commands with cifar100 if you want to run cifar100
+
+### 1. Pretrain Teacher
+
+```bash
+python train.py --mode pretrain_teacher --teacher resnet110 --dataset cifar10
+```
+
+### 2. Train Student Baseline (no distillation)
+
+```bash
+python train.py --mode student_baseline --student resnet20 --dataset cifar10
+```
+
+### 3. Run KL-KD Baseline
+
+```bash
+python train.py --method kl_kd --teacher resnet110 --student resnet20 --dataset cifar10
+```
+
+### 4. Run Fixed Sinkhorn OT-KD
+
+```bash
+python train.py --method sinkhorn_kd --teacher resnet110 --student resnet20 \
+    --dataset cifar10 --epsilon 0.05 --cost_type uniform
+```
+
+### 5. Run Adaptive Sinkhorn OT-KD (Our Method)
+
+```bash
+python train.py --method adaptive_sinkhorn_kd --teacher resnet110 --student resnet20 \
+    --dataset cifar10 --epsilon 0.05 --cost_lr 0.01 --cost_update_freq 10
+```
+
+### 6. Evaluate and Compare
+
+```bash
+python evaluate.py --dataset cifar100 --checkpoint_dir ./checkpoints/cifar10
+```
+
+### Run all above commands
+
+```bash
+bash experiments/run_all.sh cifar10
+```
+
+### Multi-seed Statistical Significance
+
+```bash
+python evaluate.py --dataset cifar10 --run_seeds --num_seeds 3
+```
+
+## Key Hyperparameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--temperature` | 4.0 | Softmax temperature for distribution softening |
+| `--epsilon` | 0.05 | Sinkhorn entropic regularization |
+| `--lambda_ot` | 0.5 | OT loss weight |
+| `--cost_lr` | 0.01 | Learning rate for cost matrix C |
+| `--cost_update_freq` | 10 | Update C every K training steps |
+| `--val_fraction` | 0.1 | Fraction of training data for bilevel validation |
+
+## Methods Compared
+
+| Method | Description |
+|--------|-------------|
+| **Student (no KD)** | ResNet-20 trained from scratch |
+| **KL-KD** | Standard KD with KL divergence (Hinton et al., 2015) |
+| **Fixed-OT-KD** | Sinkhorn OT with uniform cost matrix |
+| **Adaptive-OT-KD** | Sinkhorn OT with learnable cost matrix **(ours)** |
+
+## References
+
+- Hinton et al. "Distilling the Knowledge in a Neural Network" (2015)
+- Cuturi. "Sinkhorn Distances: Lightspeed Computation of Optimal Transport" (NeurIPS 2013)
+- SinKD (COLING 2024): Sinkhorn KD for NLP
+- MultiLevelOT (AAAI 2025): Multi-level OT for LLM distillation
+- He et al. "Deep Residual Learning for Image Recognition" (CVPR 2016)

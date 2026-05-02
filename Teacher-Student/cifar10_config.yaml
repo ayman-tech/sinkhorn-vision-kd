@@ -1,0 +1,69 @@
+# =============================================
+# CIFAR-10 Configuration
+# Sinkhorn OT Knowledge Distillation
+# =============================================
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  data_dir: ./data
+  num_workers: 4
+  pin_memory: true
+
+  # Standard CIFAR augmentation
+  augmentation:
+    random_crop: 32
+    crop_padding: 4
+    random_horizontal_flip: true
+    normalize:
+      mean: [0.4914, 0.4822, 0.4465]
+      std: [0.2470, 0.2435, 0.2616]
+
+teacher:
+  arch: resnet110
+  pretrained_path: ./checkpoints/cifar10_resnet110_teacher.pth
+  pretrain_epochs: 200
+  pretrain_lr: 0.1
+  pretrain_momentum: 0.9
+  pretrain_weight_decay: 1.0e-4
+
+student:
+  arch: resnet20
+
+training:
+  epochs: 200
+  batch_size: 128
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  lr_scheduler: cosine
+  warmup_epochs: 5
+
+distillation:
+  method: adaptive_sinkhorn_kd  # kl_kd | sinkhorn_kd | adaptive_sinkhorn_kd
+  temperature: 4.0
+  alpha: 0.9           # Weight for KD loss vs CE loss (KL baseline)
+  lambda_ot: 0.5       # Weight for OT loss (Sinkhorn methods)
+
+sinkhorn:
+  epsilon: 0.05        # Entropic regularization strength
+  max_iter: 50         # Max Sinkhorn iterations
+  threshold: 1.0e-3    # Convergence threshold
+  cost_type: uniform   # uniform | label_distance | random (for fixed cost)
+
+adaptive:
+  cost_lr: 0.01                # Learning rate for cost matrix C
+  cost_update_freq: 10         # Update C every K training steps
+  cost_grad_clip: 1.0          # Gradient clipping for C updates
+  val_fraction: 0.1            # Fraction of training data for C validation
+
+logging:
+  use_wandb: false
+  use_tensorboard: true
+  log_dir: ./logs/cifar10
+  checkpoint_dir: ./checkpoints/cifar10
+  save_freq: 10           # Save checkpoint every N epochs
+  print_freq: 50          # Print stats every N batches
+
+seed: 42
+num_seeds: 3              # For statistical significance
