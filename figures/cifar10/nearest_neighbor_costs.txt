@@ -1,0 +1,12 @@
+Class                   NN1  (cost)  NN2  (cost)  NN3  (cost)  NN4  (cost)  NN5  (cost)
+---------------------------------------------------------------------------------------
+airplane                bird               (0.000)  horse              (0.000)  cat                (0.000)  truck              (0.000)  frog               (0.000)
+automobile              cat                (0.000)  dog                (0.000)  frog               (0.000)  truck              (0.000)  bird               (0.000)
+bird                    airplane           (0.000)  cat                (0.000)  automobile         (0.000)  frog               (0.000)  dog                (0.000)
+cat                     dog                (0.000)  automobile         (0.000)  truck              (0.000)  airplane           (0.000)  bird               (0.000)
+deer                    horse              (0.000)  ship               (0.000)  cat                (0.000)  dog                (0.000)  truck              (0.000)
+dog                     cat                (0.000)  automobile         (0.000)  horse              (0.000)  deer               (0.000)  bird               (0.000)
+frog                    automobile         (0.000)  ship               (0.000)  truck              (0.000)  airplane           (0.000)  bird               (0.000)
+horse                   airplane           (0.000)  ship               (0.000)  dog                (0.000)  deer               (0.000)  truck              (0.000)
+ship                    frog               (0.000)  horse              (0.000)  deer               (0.000)  cat                (0.000)  automobile         (0.000)
+truck                   automobile         (0.000)  frog               (0.000)  cat                (0.000)  horse              (0.000)  airplane           (0.000)
