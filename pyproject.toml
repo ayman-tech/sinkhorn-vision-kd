@@ -15,6 +15,7 @@ dependencies = [
     "tqdm>=4.65.0",
     "wandb>=0.15.0",
     "scipy>=1.10.0",
+    "scikit-learn>=1.8.0",
 ]
 
 [build-system]
