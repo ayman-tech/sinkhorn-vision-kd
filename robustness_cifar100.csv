@@ -1,0 +1,81 @@
+method,corruption,severity,top1_acc
+Teacher (resnet110),clean,0,72.6899998779297
+Teacher (resnet110),gaussian_noise,1,38.369999993896485
+Teacher (resnet110),gaussian_noise,2,21.859999978637696
+Teacher (resnet110),gaussian_noise,3,13.579999983215332
+Teacher (resnet110),gaussian_noise,4,10.879999984741211
+Teacher (resnet110),gaussian_noise,5,9.079999998474122
+Teacher (resnet110),gaussian_blur,1,71.95999997558594
+Teacher (resnet110),gaussian_blur,2,59.599999957275394
+Teacher (resnet110),gaussian_blur,3,46.250000024414064
+Teacher (resnet110),gaussian_blur,4,34.24000003051758
+Teacher (resnet110),gaussian_blur,5,20.629999963378907
+Teacher (resnet110),spatter,1,67.26000001220703
+Teacher (resnet110),spatter,2,58.05999999389648
+Teacher (resnet110),spatter,3,50.849999951171874
+Teacher (resnet110),spatter,4,60.02000002441406
+Teacher (resnet110),spatter,5,48.26000001831055
+Student (no KD),clean,0,69.52999990234375
+Student (no KD),gaussian_noise,1,31.64999998474121
+Student (no KD),gaussian_noise,2,17.469999995422363
+Student (no KD),gaussian_noise,3,11.160000001525878
+Student (no KD),gaussian_noise,4,9.370000001525879
+Student (no KD),gaussian_noise,5,7.709999996185303
+Student (no KD),gaussian_blur,1,69.25999995117188
+Student (no KD),gaussian_blur,2,55.88
+Student (no KD),gaussian_blur,3,43.96999999389649
+Student (no KD),gaussian_blur,4,33.80999999694824
+Student (no KD),gaussian_blur,5,21.179999996948244
+Student (no KD),spatter,1,64.9899999633789
+Student (no KD),spatter,2,56.06999995727539
+Student (no KD),spatter,3,47.35999993286133
+Student (no KD),spatter,4,53.499999963378905
+Student (no KD),spatter,5,39.03000000610351
+KL-KD,clean,0,70.56000002441407
+KL-KD,gaussian_noise,1,35.779999969482425
+KL-KD,gaussian_noise,2,19.35999998168945
+KL-KD,gaussian_noise,3,11.380000004577637
+KL-KD,gaussian_noise,4,9.049999992370605
+KL-KD,gaussian_noise,5,7.599999989318848
+KL-KD,gaussian_blur,1,69.57999986572266
+KL-KD,gaussian_blur,2,56.11999994506836
+KL-KD,gaussian_blur,3,44.349999957275394
+KL-KD,gaussian_blur,4,34.33000001220703
+KL-KD,gaussian_blur,5,23.02999997253418
+KL-KD,spatter,1,66.04999998779297
+KL-KD,spatter,2,59.65999998779297
+KL-KD,spatter,3,52.24999993286133
+KL-KD,spatter,4,59.119999920654294
+KL-KD,spatter,5,47.48000001220703
+Fixed-OT-KD,clean,0,70.08000003662109
+Fixed-OT-KD,gaussian_noise,1,36.63999995727539
+Fixed-OT-KD,gaussian_noise,2,22.06000001220703
+Fixed-OT-KD,gaussian_noise,3,14.219999996948243
+Fixed-OT-KD,gaussian_noise,4,11.919999981689454
+Fixed-OT-KD,gaussian_noise,5,10.040000004577637
+Fixed-OT-KD,gaussian_blur,1,69.28999997558594
+Fixed-OT-KD,gaussian_blur,2,57.05999992675781
+Fixed-OT-KD,gaussian_blur,3,46.039999926757815
+Fixed-OT-KD,gaussian_blur,4,36.179999975585936
+Fixed-OT-KD,gaussian_blur,5,23.77999999694824
+Fixed-OT-KD,spatter,1,64.61999987792969
+Fixed-OT-KD,spatter,2,56.679999981689456
+Fixed-OT-KD,spatter,3,49.52999993286133
+Fixed-OT-KD,spatter,4,55.45
+Fixed-OT-KD,spatter,5,42.31999995727539
+Adaptive-OT-KD,clean,0,68.42999998779297
+Adaptive-OT-KD,gaussian_noise,1,33.819999963378905
+Adaptive-OT-KD,gaussian_noise,2,20.45999998779297
+Adaptive-OT-KD,gaussian_noise,3,13.720000003051759
+Adaptive-OT-KD,gaussian_noise,4,11.289999981689453
+Adaptive-OT-KD,gaussian_noise,5,9.999999981689452
+Adaptive-OT-KD,gaussian_blur,1,67.89000003662109
+Adaptive-OT-KD,gaussian_blur,2,54.57999994506836
+Adaptive-OT-KD,gaussian_blur,3,43.12999996337891
+Adaptive-OT-KD,gaussian_blur,4,33.490000024414066
+Adaptive-OT-KD,gaussian_blur,5,20.799999963378905
+Adaptive-OT-KD,spatter,1,63.00999993286133
+Adaptive-OT-KD,spatter,2,54.34999998168945
+Adaptive-OT-KD,spatter,3,46.679999963378904
+Adaptive-OT-KD,spatter,4,52.99
+Adaptive-OT-KD,spatter,5,38.55999993286133
