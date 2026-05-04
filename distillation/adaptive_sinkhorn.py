@@ -34,6 +34,11 @@ This parameterization guarantees:
 For bilevel optimization, we use simple alternating updates (not MAML):
     - Every K steps: freeze student theta, take gradient step on C using val batch
     - Otherwise: freeze C, take gradient step on theta using train batch
+
+Cost warmup: C is NOT updated for the first `cost_warmup_epochs` epochs. This
+lets the student learn basic features first before adapting the cost structure.
+Updating C when the student is randomly initialized leads to meaningless cost
+structure that hurts subsequent training.
 """
 
 import torch
@@ -112,7 +117,7 @@ class AdaptiveSinkhornKD(nn.Module):
         L_total = L_CE(z_S, y) + lambda_ot * W_eps(p_T, p_S; C)
 
     Bilevel optimization (simple alternating):
-        - Every `cost_update_freq` training steps:
+        - Every `cost_update_freq` training steps (after warmup):
             * Freeze student params theta
             * Compute L_total on a VALIDATION batch
             * Take one gradient step on C (cost_lr, with gradient clipping)
@@ -120,6 +125,13 @@ class AdaptiveSinkhornKD(nn.Module):
             * Freeze C
             * Compute L_total on a TRAINING batch
             * Update theta via the main optimizer
+
+    Cost warmup:
+        During the first `cost_warmup_epochs` epochs, C is NOT updated.
+        The student trains with the initial (near-uniform) cost matrix,
+        learning basic features before the cost structure starts adapting.
+        This prevents C from learning garbage structure based on a
+        randomly initialized student.
 
     Args:
         num_classes: Number of output classes.
@@ -132,6 +144,8 @@ class AdaptiveSinkhornKD(nn.Module):
         cost_update_freq: Update C every this many training steps.
         cost_grad_clip: Max gradient norm for C updates.
         init_scale: Initialization scale for the cost matrix.
+        cost_warmup_epochs: Number of epochs to wait before starting C updates.
+            During warmup, the method behaves identically to fixed-OT-KD.
     """
 
     def __init__(
@@ -146,6 +160,7 @@ class AdaptiveSinkhornKD(nn.Module):
         cost_update_freq: int = 10,
         cost_grad_clip: float = 1.0,
         init_scale: float = 0.5,
+        cost_warmup_epochs: int = 30,
     ):
         super().__init__()
         self.temperature = temperature
@@ -155,6 +170,7 @@ class AdaptiveSinkhornKD(nn.Module):
         self.threshold = threshold
         self.cost_update_freq = cost_update_freq
         self.cost_grad_clip = cost_grad_clip
+        self.cost_warmup_epochs = cost_warmup_epochs
 
         self.ce_loss = nn.CrossEntropyLoss()
         self.cost_matrix = LearnableCostMatrix(num_classes, init_scale)
@@ -165,6 +181,11 @@ class AdaptiveSinkhornKD(nn.Module):
         )
 
         self._step_count = 0
+        self._current_epoch = 0
+
+    def set_epoch(self, epoch: int):
+        """Set the current epoch (called by the training loop each epoch)."""
+        self._current_epoch = epoch
 
     def forward(
         self, student_logits: torch.Tensor, teacher_logits: torch.Tensor,
@@ -215,8 +236,11 @@ class AdaptiveSinkhornKD(nn.Module):
     def should_update_cost(self) -> bool:
         """Check if this step should update the cost matrix C (outer loop).
 
-        Returns True every `cost_update_freq` steps.
+        Returns False during warmup (first `cost_warmup_epochs` epochs).
+        After warmup, returns True every `cost_update_freq` steps.
         """
+        if self._current_epoch < self.cost_warmup_epochs:
+            return False
         return self._step_count % self.cost_update_freq == 0
 
     def step_cost_matrix(

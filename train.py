@@ -55,12 +55,14 @@ def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def get_device() -> torch.device:
+    """Select best available device: CUDA > CPU."""
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
@@ -115,8 +117,8 @@ def pretrain_teacher(args):
 
     print(f"Pretraining {args.teacher} on {args.dataset}")
     print(f"Parameters: {count_parameters(model):,}")
-    print(f"{'Epoch':>6} | {'Train Loss':>10} | {'Train Acc':>9} | {'Test Acc':>8} | {'LR':>8}")
-    print("-" * 60)
+    print(f"{'Epoch':>6} | {'Train Loss':>10} | {'Train Acc':>9} | {'Test@1':>7} | {'Test@5':>7} | {'LR':>8}")
+    print("-" * 70)
 
     best_acc = 0.0
     for epoch in range(args.pretrain_epochs):
@@ -140,33 +142,36 @@ def pretrain_teacher(args):
         scheduler.step()
 
         # Evaluate
-        test_acc = evaluate_model(model, test_loader, device)
+        test_acc, test_acc5 = evaluate_model(model, test_loader, device)
         lr_now = optimizer.param_groups[0]["lr"]
-        print(f"{epoch+1:>6} | {losses.avg:>10.4f} | {top1.avg:>8.2f}% | {test_acc:>7.2f}% | {lr_now:>8.5f}")
+        print(f"{epoch+1:>6} | {losses.avg:>10.4f} | {top1.avg:>8.2f}% | {test_acc:>6.2f}% | {test_acc5:>6.2f}% | {lr_now:>8.5f}")
 
         if test_acc > best_acc:
             best_acc = test_acc
             ckpt_dir = args.checkpoint_dir or f"./checkpoints/{args.dataset}"
             save_checkpoint(
                 {"arch": args.teacher, "state_dict": model.state_dict(),
-                 "num_classes": num_classes, "best_acc": best_acc, "epoch": epoch},
+                 "num_classes": num_classes, "best_acc": best_acc,
+                 "best_acc5": test_acc5, "epoch": epoch},
                 os.path.join(ckpt_dir, f"{args.dataset}_{args.teacher}_teacher.pth"),
             )
 
     print(f"\nTeacher pretraining complete. Best accuracy: {best_acc:.2f}%")
 
 
-def evaluate_model(model: nn.Module, loader, device: torch.device) -> float:
-    """Evaluate a model on a data loader, return top-1 accuracy."""
+def evaluate_model(model: nn.Module, loader, device: torch.device):
+    """Evaluate a model on a data loader, return (top1_acc, top5_acc)."""
     model.eval()
     top1 = AverageMeter()
+    top5 = AverageMeter()
     with torch.no_grad():
         for images, labels in loader:
             images, labels = images.to(device), labels.to(device)
             logits = model(images)
-            acc = accuracy(logits, labels)[0]
-            top1.update(acc, images.size(0))
-    return top1.avg
+            acc1, acc5 = accuracy(logits, labels, topk=(1, 5))
+            top1.update(acc1, images.size(0))
+            top5.update(acc5, images.size(0))
+    return top1.avg, top5.avg
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -235,6 +240,7 @@ def train_distillation(args):
             max_iter=args.sinkhorn_max_iter, threshold=args.sinkhorn_threshold,
             cost_lr=args.cost_lr, cost_update_freq=args.cost_update_freq,
             cost_grad_clip=args.cost_grad_clip,
+            cost_warmup_epochs=args.cost_warmup_epochs,
         ).to(device)
     else:
         raise ValueError(f"Unknown method: {args.method}")
@@ -245,16 +251,20 @@ def train_distillation(args):
 
     # ── Training loop ─────────────────────────────────────────────────────
     history = {
-        "train_acc": [], "val_acc": [], "train_loss": [],
+        "train_acc": [], "val_acc": [], "val_acc5": [], "train_loss": [],
         "ot_loss": [], "kd_loss": [], "ce_loss": [],
     }
     best_acc = 0.0
+    best_acc5 = 0.0
 
-    header = f"{'Epoch':>6} | {'Loss':>8} | {'OT/KD':>8} | {'CE':>8} | {'Train':>7} | {'Test':>7} | {'LR':>8}"
+    header = f"{'Epoch':>6} | {'Loss':>8} | {'OT/KD':>8} | {'CE':>8} | {'Train':>7} | {'Test@1':>7} | {'Test@5':>7} | {'LR':>8}"
     print(f"\n{header}")
     print("-" * len(header))
 
     for epoch in range(args.epochs):
+        if args.method == "adaptive_sinkhorn_kd":
+            criterion.set_epoch(epoch)
+
         student.train()
         losses = AverageMeter()
         ot_losses = AverageMeter()
@@ -311,14 +321,15 @@ def train_distillation(args):
         scheduler.step()
 
         # ── Evaluation ────────────────────────────────────────────────────
-        test_acc = evaluate_model(student, test_loader, device)
+        test_acc, test_acc5 = evaluate_model(student, test_loader, device)
         lr_now = optimizer.param_groups[0]["lr"]
 
         print(f"{epoch+1:>6} | {losses.avg:>8.4f} | {ot_losses.avg:>8.4f} | "
-              f"{ce_losses.avg:>8.4f} | {top1.avg:>6.2f}% | {test_acc:>6.2f}% | {lr_now:>8.5f}")
+              f"{ce_losses.avg:>8.4f} | {top1.avg:>6.2f}% | {test_acc:>6.2f}% | {test_acc5:>6.2f}% | {lr_now:>8.5f}")
 
         history["train_acc"].append(top1.avg)
         history["val_acc"].append(test_acc)
+        history["val_acc5"].append(test_acc5)
         history["train_loss"].append(losses.avg)
         history["ot_loss"].append(ot_losses.avg)
         history["ce_loss"].append(ce_losses.avg)
@@ -326,11 +337,12 @@ def train_distillation(args):
         # ── Checkpointing ─────────────────────────────────────────────────
         if test_acc > best_acc:
             best_acc = test_acc
+            best_acc5 = test_acc5
             state = {
                 "method": args.method, "epoch": epoch,
                 "student_arch": args.student, "teacher_arch": args.teacher,
                 "state_dict": student.state_dict(),
-                "best_acc": best_acc, "history": history,
+                "best_acc": best_acc, "best_acc5": best_acc5, "history": history,
             }
             if args.method == "adaptive_sinkhorn_kd":
                 state["cost_matrix"] = criterion.get_cost_matrix_numpy()
@@ -341,17 +353,17 @@ def train_distillation(args):
                 "method": args.method, "epoch": epoch,
                 "student_arch": args.student, "state_dict": student.state_dict(),
                 "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
-                "best_acc": best_acc, "history": history,
+                "best_acc": best_acc, "best_acc5": best_acc5, "history": history,
             }
             if args.method == "adaptive_sinkhorn_kd":
                 state["cost_matrix"] = criterion.get_cost_matrix_numpy()
             save_checkpoint(state, os.path.join(ckpt_dir, f"{args.method}_epoch{epoch+1}.pth"))
 
-    print(f"\nTraining complete. Best test accuracy: {best_acc:.2f}%")
+    print(f"\nTraining complete. Best test accuracy: {best_acc:.2f}% (top-5: {best_acc5:.2f}%)")
 
     # ── Save final results + visualizations ───────────────────────────────
     save_checkpoint(
-        {"history": history, "best_acc": best_acc, "args": vars(args)},
+        {"history": history, "best_acc": best_acc, "best_acc5": best_acc5, "args": vars(args)},
         os.path.join(ckpt_dir, f"{args.method}_results.pth"),
     )
 
@@ -393,6 +405,7 @@ def train_student_baseline(args):
     print(f"Parameters: {count_parameters(student):,}")
 
     best_acc = 0.0
+    best_acc5 = 0.0
     for epoch in range(args.epochs):
         student.train()
         losses = AverageMeter()
@@ -410,20 +423,22 @@ def train_student_baseline(args):
             top1.update(acc, images.size(0))
 
         scheduler.step()
-        test_acc = evaluate_model(student, test_loader, device)
+        test_acc, test_acc5 = evaluate_model(student, test_loader, device)
 
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1:>4} | Loss: {losses.avg:.4f} | "
-                  f"Train: {top1.avg:.2f}% | Test: {test_acc:.2f}%")
+                  f"Train: {top1.avg:.2f}% | Test@1: {test_acc:.2f}% | Test@5: {test_acc5:.2f}%")
 
         if test_acc > best_acc:
             best_acc = test_acc
+            best_acc5 = test_acc5
             save_checkpoint(
-                {"arch": args.student, "state_dict": student.state_dict(), "best_acc": best_acc},
+                {"arch": args.student, "state_dict": student.state_dict(),
+                 "best_acc": best_acc, "best_acc5": best_acc5},
                 os.path.join(ckpt_dir, f"{args.student}_no_kd_best.pth"),
             )
 
-    print(f"Student baseline complete. Best accuracy: {best_acc:.2f}%")
+    print(f"Student baseline complete. Best accuracy: {best_acc:.2f}% (top-5: {best_acc5:.2f}%)")
     return best_acc
 
 
@@ -489,6 +504,8 @@ def parse_args():
     parser.add_argument("--cost_update_freq", type=int, default=10,
                         help="Update C every K training steps.")
     parser.add_argument("--cost_grad_clip", type=float, default=1.0)
+    parser.add_argument("--cost_warmup_epochs", type=int, default=30,
+                        help="Epochs to wait before starting C updates.")
     parser.add_argument("--val_fraction", type=float, default=0.1,
                         help="Fraction of train data for cost matrix validation.")
 
