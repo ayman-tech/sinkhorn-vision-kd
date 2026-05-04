@@ -343,9 +343,7 @@ bash experiments/run_all.sh cifar100
 ### Multi-Seed Statistical Significance
 
 ```bash
-python evaluate.py --dataset cifar10 \
-    --checkpoint_dir ./checkpoints/cifar10 \
-    --run_seeds --num_seeds 3
+    python evaluate.py --dataset cifar10 --run_seeds --num_seeds 3
 ```
 
 Trains all 4 variants per seed and reports mean ± std accuracy.

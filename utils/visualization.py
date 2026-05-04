@@ -533,7 +533,7 @@ def plot_nearest_neighbor_costs(
             header = f"{'Class':<22}" + "".join(f"  NN{n+1:<2} (cost)" for n in range(k))
             f.write(header + "\n" + "-" * len(header) + "\n")
             for cls_name, neighbors in all_rows:
-                nn_str = "".join(f"  {n:<18} ({c:.3f})" for n, c in neighbors)
+                nn_str = "".join(f"  {n:<18} ({c:.5f})" for n, c in neighbors)
                 f.write(f"{cls_name:<22}{nn_str}\n")
         print(f"Full nearest-neighbor table saved to {txt_path}")
 
@@ -555,7 +555,7 @@ def plot_nearest_neighbor_costs(
 
     col_labels = ["Class"] + [f"Neighbor {n + 1}" for n in range(k)]
     table_data = [
-        [cls_name] + [f"{n}  ({c:.3f})" for n, c in neighbors]
+        [cls_name] + [f"{n}  ({c:.5f})" for n, c in neighbors]
         for cls_name, neighbors in rep_rows
     ]
 

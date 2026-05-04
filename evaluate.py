@@ -5,6 +5,7 @@ Loads all saved checkpoints, prints a comparison table, generates visualizations
 and optionally runs:
   --alignment   Teacher-student alignment metrics (KL, Sinkhorn W_eps, cosine, agreement)
   --robustness  CIFAR-10-C / CIFAR-100-C corruption sweep (downloads ~2.9 GB on first run)
+  --no_entropy  Skip predictive entropy measurement (runs by default)
 
 Usage:
     python evaluate.py --dataset cifar10 --checkpoint_dir ./checkpoints/cifar10
@@ -16,6 +17,7 @@ Usage:
 
 import argparse
 import csv
+import math
 import os
 import glob
 import re
@@ -682,13 +684,51 @@ def _plot_robustness_curves(res: dict, dataset: str, save_path: str):
     print(f"Robustness curves saved to {save_path}")
 
 
+# ── Entropy ────────────────────────────────────────────────────────────────────
+
+def run_entropy(args, models: dict, test_loader) -> dict:
+    """Compute predictive entropy for each loaded model."""
+    device = get_device()
+    num_classes = 10 if args.dataset == "cifar10" else 100
+
+    print("\n" + "=" * 57)
+    print("OUTPUT ENTROPY (test set)")
+    print("=" * 57)
+    print(f"{'Method':<25} | {'Mean Entropy':>14} | {'Max Entropy':>12}")
+    print("-" * 57)
+
+    res = {}
+    for name, model in models.items():
+        probs, _ = collect_predictions(model, test_loader, device)
+        entropy = torch.distributions.Categorical(probs=probs).entropy()
+        mean_h = entropy.mean().item()
+        max_h  = entropy.max().item()
+        res[name] = {"mean": mean_h, "max": max_h}
+        print(f"{name:<25} | {mean_h:>14.4f} | {max_h:>12.4f}")
+
+    print(f"\n(Max possible entropy for {num_classes} classes"
+          f" = ln({num_classes}) = {math.log(num_classes):.4f})")
+    print("=" * 57)
+
+    if getattr(args, "entropy_csv", None) and res:
+        with open(args.entropy_csv, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["method", "mean_entropy", "max_entropy"])
+            for name, m in res.items():
+                w.writerow([name, m["mean"], m["max"]])
+        print(f"entropy csv → {args.entropy_csv}")
+
+    return res
+
+
 # ── Multi-seed ─────────────────────────────────────────────────────────────────
 
 def run_multi_seed(args):
     """Train all methods across multiple seeds and report mean ± std accuracy."""
     from train import train_distillation, train_student_baseline, set_seed
 
-    seeds = list(range(args.seed, args.seed + args.num_seeds))
+    _default_seeds = [42, 123, 456, 789, 1234]
+    seeds = _default_seeds[:args.num_seeds]
     all_results = {m: [] for m in ["student_baseline", "kl_kd", "sinkhorn_kd", "adaptive_sinkhorn_kd"]}
 
     for seed in seeds:
@@ -733,6 +773,8 @@ def parse_args():
                         help="Run teacher-student alignment metrics.")
     parser.add_argument("--robustness", action="store_true",
                         help="Run CIFAR-C robustness sweep (~2.9 GB download on first run).")
+    parser.add_argument("--no_entropy", action="store_true",
+                        help="Skip predictive entropy measurement.")
 
     # Alignment options
     parser.add_argument("--temperature", type=float, default=4.0,
@@ -753,6 +795,8 @@ def parse_args():
                         help="Keep the downloaded CIFAR-C tar after extraction (~2.9 GB).")
     parser.add_argument("--robustness_csv", default=None,
                         help="Save robustness results to this CSV path.")
+    parser.add_argument("--entropy_csv", default=None,
+                        help="Save entropy results to this CSV path.")
 
     return parser.parse_args()
 
@@ -771,8 +815,10 @@ def main():
     results, adapt_ckpt, predictions, models, test_loader = collect_results(args)
     print_comparison_table(results)
 
-    alignment_res = run_alignment(args, models, test_loader) if args.alignment else None
+    alignment_res  = run_alignment(args, models, test_loader) if args.alignment else None
     robustness_res = run_robustness(args, models) if args.robustness else None
+    if not args.no_entropy:
+        run_entropy(args, models, test_loader)
 
     generate_visualizations(args, results, adapt_ckpt, predictions,
                             alignment_res=alignment_res,
