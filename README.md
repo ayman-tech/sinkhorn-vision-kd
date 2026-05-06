@@ -6,11 +6,11 @@ Compress large vision models into compact students using **Optimal Transport** a
 
 ## Goal
 
-Standard Knowledge Distillation (KD) uses KL divergence to align student and teacher distributions. KL treats all class confusions equally — confusing "cat" with "dog" costs the same as confusing "cat" with "truck". This ignores the semantic structure of the label space.
+Standard Knowledge Distillation (KD) uses KL divergence to align student and teacher distributions. KL treats all class confusions equally confusing "cat" with "dog" costs the same as confusing "cat" with "truck". This ignores the semantic structure of the label space.
 
-We replace KL with **Sinkhorn Optimal Transport (OT) distance**, which measures how much probability mass must be moved between teacher and student distributions according to a cost matrix `C[i][j]` — the penalty for confusing class `i` with class `j`.
+We replace KL with **Sinkhorn Optimal Transport (OT) distance**, which measures how much probability mass must be moved between teacher and student distributions according to a cost matrix `C[i][j]` which is the penalty for confusing class `i` with class `j`.
 
-Our core contribution: instead of hand-designing `C`, we **learn it jointly with the student** via bilevel optimization. The learned cost matrix captures semantic geometry — on CIFAR-100, animal classes cluster together with low mutual cost, vehicle classes cluster together, and cross-category confusions incur high cost.
+Our core contribution: instead of hand-designing `C`, we **learn it jointly with the student** via bilevel optimization. The learned cost matrix captures semantic geometry on CIFAR-100, animal classes cluster together with low mutual cost, vehicle classes cluster together, and cross-category confusions incur high cost.
 
 ---
 
@@ -53,7 +53,7 @@ $$W_\varepsilon(p_T, p_S) = \min_{\pi \in \Pi(p_T,\, p_S)} \langle C,\, \pi \ran
 
 **Cost matrix parameterization** enforced on every forward pass through `LearnableCostMatrix`:
 
-1. Raw parameter `A` — unconstrained `nn.Parameter`, shape `K × K`
+1. Raw parameter `A` —> unconstrained `nn.Parameter`, shape `K × K`
 2. Symmetrize: `S = (A + Aᵀ) / 2`
 3. Non-negativity: `C' = softplus(S)`
 4. Zero diagonal: `C = C' * (1 − I)`
@@ -93,8 +93,8 @@ Guarantees: `C ≥ 0`, `C = Cᵀ`, `diag(C) = 0`, `C ∈ [0, 1]`.
              │    W_ε(p_T, p_S ; C)         │
              │                              │
              │  C ∈ ℝ^(K×K)  cost matrix   │
-             │  [LEARNABLE — our method]    │
-             │  [FIXED      — baseline]     │
+             │  [LEARNABLE (our method)]    │
+             │  [FIXED   ->  baseline]     │
              └──────────────────────────────┘
                             │
                             ▼
@@ -213,11 +213,11 @@ sinkhorn-vision-kd/
 │   ├── resnet.py                  # ResNet-20 / 56 / 110 for CIFAR
 │   └── mobilenet.py               # MobileNetV2 (CIFAR-adapted, optional student)
 ├── distillation/
-│   ├── kl_distill.py              # KLDistillationLoss — Hinton et al. baseline
-│   ├── sinkhorn_distill.py        # SinkhornDistillationLoss — fixed cost OT-KD
+│   ├── kl_distill.py              # KL Distillation Loss (Hinton et al. baseline)
+│   ├── sinkhorn_distill.py        # SinkhornDistillationLoss (fixed cost OT-KD)
 │   │                              #   + log_sinkhorn solver
 │   │                              #   + build_cost_matrix (uniform/label_distance/random)
-│   └── adaptive_sinkhorn.py       # AdaptiveSinkhornKD — learnable cost [OURS]
+│   └── adaptive_sinkhorn.py       # AdaptiveSinkhornKD (learnable cost [OURS])
 │                                  #   + LearnableCostMatrix parameterization
 ├── utils/
 │   ├── data_loader.py             # get_cifar_loaders, get_class_names
@@ -263,7 +263,7 @@ python train.py --config configs/cifar10_config.yaml
 
 ---
 
-### Step 1 — Pretrain Teacher
+### Step 1. Pretrain Teacher
 
 ```bash
 python train.py --mode pretrain_teacher \
@@ -275,7 +275,7 @@ Saves: `./checkpoints/cifar10/cifar10_resnet110_teacher.pth`
 
 ---
 
-### Step 2 — Train Student Baseline (no distillation)
+### Step 2. Train Student Baseline (no distillation)
 
 ```bash
 python train.py --mode student_baseline \
@@ -286,7 +286,7 @@ Saves: `./checkpoints/cifar10/resnet20_no_kd_best.pth`
 
 ---
 
-### Step 3 — KL-KD Baseline
+### Step 3. KL-KD Baseline
 
 ```bash
 python train.py --mode distill --method kl_kd \
@@ -296,7 +296,7 @@ python train.py --mode distill --method kl_kd \
 
 ---
 
-### Step 4 — Fixed Sinkhorn OT-KD
+### Step 4. Fixed Sinkhorn OT-KD
 
 ```bash
 python train.py --mode distill --method sinkhorn_kd \
@@ -308,7 +308,7 @@ python train.py --mode distill --method sinkhorn_kd \
 
 ---
 
-### Step 5 — Adaptive Sinkhorn OT-KD (Our Method)
+### Step 5. Adaptive Sinkhorn OT-KD (Our Method)
 
 ```bash
 python train.py --mode distill --method adaptive_sinkhorn_kd \
@@ -320,7 +320,7 @@ python train.py --mode distill --method adaptive_sinkhorn_kd \
 
 ---
 
-### Step 6 — Evaluate and Compare All Methods
+### Step 6. Evaluate and Compare All Methods
 
 ```bash
 python evaluate.py --dataset cifar10 --checkpoint_dir ./checkpoints/cifar10
@@ -424,7 +424,7 @@ All models expose `forward(x, return_features=True)` which additionally returns 
 | Fixed-OT-KD | 74.04% | 98.23% | 0.0686 | 0.8017 | 0.3693 | 0.27M | 81.6M |
 | **Adaptive-OT-KD (Ours)** | **92.98%** | **99.85%** | **0.0348** | **0.2618** | **0.1128** | 0.27M | 81.6M |
 
-Adaptive-OT-KD achieves the best Top-1 and Top-5 while matching the student baseline on all calibration metrics — at a **6.4× parameter reduction** and **6.2× FLOPs reduction** over the teacher.
+Adaptive-OT-KD achieves the best Top-1 and Top-5 while matching the student baseline on all calibration metrics at a **6.4× parameter reduction** and **6.2× FLOPs reduction** over the teacher.
 
 ---
 
