@@ -1,6 +1,6 @@
 # Sinkhorn Optimal Transport Knowledge Distillation with Learnable Cost Matrix
 
-Compress large vision models into compact students using **Optimal Transport** as the distillation loss — with a cost matrix that is *learned jointly* with the student via bilevel optimization.
+Compress large vision models into compact students using **Optimal Transport** as the distillation loss with a cost matrix that is *learned jointly* with the student via bilevel optimization.
 
 ---
 
